@@ -1,7 +1,5 @@
 package com.Test.Service;
 
-
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,6 +25,9 @@ public class NumberService {
     private final String baseUrl;
     private final int timeout;
     private final LinkedList<Integer> numberWindow = new LinkedList<>();
+    
+    @Value("${auth.access-token}")
+    private String accessToken;
 
     public NumberService(
             WebClient webClient,
@@ -40,15 +41,21 @@ public class NumberService {
     }
 
     public AverageResponse processNumberRequest(String numberId) {
+        log.info("Processing request for number type: {}", numberId);
         List<Integer> previousState = new ArrayList<>(numberWindow);
+        log.info("Previous state: {}", previousState);
         
         NumbersResponse response = fetchNumbers(numberId);
         List<Integer> receivedNumbers = response != null ? response.getNumbers() : Collections.emptyList();
+        log.info("Received numbers: {}", receivedNumbers);
         
         addUniqueNumbersToWindow(receivedNumbers);
         
         List<Integer> currentState = new ArrayList<>(numberWindow);
+        log.info("Current state after adding unique numbers: {}", currentState);
+        
         double average = calculateAverage(currentState);
+        log.info("Calculated average: {}", average);
         
         return AverageResponse.builder()
                 .windowPrevState(previousState)
@@ -80,10 +87,20 @@ public class NumberService {
 
         String fullUrl = baseUrl + endpoint;
         log.info("Calling third-party API: {}", fullUrl);
+        
+        if (accessToken == null || accessToken.isEmpty()) {
+            log.error("Access token is not set in application.properties");
+            return new NumbersResponse(Collections.emptyList());
+        }
+        
+        log.info("Using access token: {}...", 
+                accessToken.length() > 10 ? accessToken.substring(0, 10) + "..." : accessToken);
 
         try {
+            log.info("Sending request to {}", fullUrl);
             NumbersResponse response = webClient.get()
                     .uri(fullUrl)
+                    .header("Authorization", "Bearer " + accessToken)
                     .retrieve()
                     .bodyToMono(NumbersResponse.class)
                     .timeout(Duration.ofMillis(timeout))
@@ -116,28 +133,36 @@ public class NumberService {
 
     private void addUniqueNumbersToWindow(List<Integer> newNumbers) {
         if (newNumbers == null || newNumbers.isEmpty()) {
+            log.info("No new numbers to add to window");
             return;
         }
 
+        log.info("Adding {} numbers to window with current size {}", newNumbers.size(), numberWindow.size());
         for (Integer number : newNumbers) {
             if (!numberWindow.contains(number)) {
                 if (numberWindow.size() >= windowSize) {
-                    // Remove the oldest number
-                    numberWindow.removeFirst();
+                    Integer removed = numberWindow.removeFirst();
+                    log.info("Window full, removed oldest number: {}", removed);
                 }
                 numberWindow.addLast(number);
+                log.info("Added number {} to window", number);
+            } else {
+                log.info("Number {} already in window, skipping", number);
             }
         }
     }
 
     private double calculateAverage(List<Integer> numbers) {
         if (numbers == null || numbers.isEmpty()) {
+            log.info("No numbers to calculate average");
             return 0.0;
         }
         
-        return numbers.stream()
+        double avg = numbers.stream()
                 .mapToDouble(Integer::doubleValue)
                 .average()
                 .orElse(0.0);
+        
+        return Math.round(avg * 100.0) / 100.0;
     }
-} 
+}
